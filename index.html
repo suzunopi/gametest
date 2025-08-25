@@ -7,7 +7,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
 import { getDatabase, ref, set, onValue, get } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-database.js";
 
-// 🔥 paste your firebase config
 const firebaseConfig = {
   apiKey: "AIzaSyBGR79jHTrXO71izWaSyWLnW2diUOVk1s4",
   authDomain: "gametest-114ff.firebaseapp.com",
@@ -21,7 +20,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-// only 4 question pairs here for brevity, add all 50
+// add your full 50 question pairs here
 const questionPairs = [
    ["what's the worst decision you've ever made?", "what's the best decision you've ever made?"],
       ["what's the worst advice you've ever taken?", "what's the best advice you've ever gotten?"],
@@ -80,57 +79,64 @@ let roomCode = "";
 let player = "";
 let myQuestion = "";
 
-// join room and setup listeners
 function joinRoom() {
   roomCode = document.getElementById("room").value;
   player = prompt("Are you Player 1 or Player 2? (type 1 or 2)");
   if (player !== "1" && player !== "2") return alert("please type 1 or 2");
 
-  // listen to number changes
-  const numRef = ref(db, `rooms/${roomCode}/number`);
-  onValue(numRef, async (snapshot) => {
-    const num = snapshot.val();
-    if (num) await pickQuestion(num);
-  });
+  // initialize score if not exist
+  set(ref(db, `rooms/${roomCode}/score${player}`), 0);
 
   // listen to your score
   const scoreRef = ref(db, `rooms/${roomCode}/score${player}`);
-  onValue(scoreRef, (snap) => {
-    const s = snap.val() || 0;
-    document.getElementById("score").textContent = "Your Score: " + s;
+  onValue(scoreRef, snap => {
+    document.getElementById("score").textContent = "Your Score: " + (snap.val() || 0);
+  });
+
+  // listen to your assigned question
+  onValue(ref(db, `rooms/${roomCode}/player${player}Question`), snap => {
+    if (snap.exists()) {
+      myQuestion = snap.val();
+      document.getElementById("question").textContent = "Your Question: " + myQuestion;
+    }
   });
 }
 
-// choose number and update firebase
 async function chooseNumber() {
   const num = parseInt(document.getElementById("num").value);
   if (num < 1 || num > questionPairs.length) return alert("choose 1-" + questionPairs.length);
 
-  // always write number, triggers question pick for both players
-  await set(ref(db, `rooms/${roomCode}/number`), num);
-}
+  const roomRef = ref(db, `rooms/${roomCode}`);
+  const roomSnap = await get(roomRef);
 
-// pick a random question for this player and save to firebase
-async function pickQuestion(num) {
+  if (roomSnap.exists() && roomSnap.val().roundActive) {
+    return alert("round already active, wait for both players to finish!");
+  }
+
+  // pick random questions for each player and save to firebase
   const pair = questionPairs[num - 1];
-  myQuestion = pair[Math.floor(Math.random() * 2)];
-  await set(ref(db, `rooms/${roomCode}/player${player}Question`), myQuestion);
-  document.getElementById("question").textContent = "Your Question: " + myQuestion;
+  const q1 = pair[Math.floor(Math.random() * 2)];
+  const q2 = pair.find(q => q !== q1) || pair[0];
+
+  await set(ref(db, `rooms/${roomCode}`), {
+    player1Question: q1,
+    player2Question: q2,
+    number: num,
+    roundActive: true
+  });
 }
 
-// guess if same or different
 async function guess(same) {
+  const roomSnap = await get(ref(db, `rooms/${roomCode}`));
+  if (!roomSnap.exists()) return alert("room data missing!");
+  const roomData = roomSnap.val();
+
   const otherPlayer = player === "1" ? "2" : "1";
-  const otherSnap = await get(ref(db, `rooms/${roomCode}/player${otherPlayer}Question`));
-  if (!otherSnap.exists()) return alert("wait for the other player to pick a question!");
+  const otherQuestion = roomData[`player${otherPlayer}Question`];
 
-  const otherQuestion = otherSnap.val();
   const actuallySame = myQuestion === otherQuestion;
-
   const scoreRef = ref(db, `rooms/${roomCode}/score${player}`);
-  let currentScore = 0;
-  const scoreSnap = await get(scoreRef);
-  if (scoreSnap.exists()) currentScore = scoreSnap.val();
+  let currentScore = (await get(scoreRef)).val() || 0;
 
   if ((same && actuallySame) || (!same && !actuallySame)) {
     alert("Correct! +1 point 💖");
@@ -139,13 +145,15 @@ async function guess(same) {
   } else {
     alert("Oops! Wrong guess 😢");
   }
+
+  // end round so new number can be chosen
+  await set(ref(db, `rooms/${roomCode}/roundActive`), false);
 }
 
 window.joinRoom = joinRoom;
 window.chooseNumber = chooseNumber;
 window.guessSame = () => guess(true);
 window.guessDifferent = () => guess(false);
-
 </script>
 </head>
 <body>
